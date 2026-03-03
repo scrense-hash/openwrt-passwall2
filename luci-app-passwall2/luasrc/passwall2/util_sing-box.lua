@@ -955,6 +955,9 @@ function gen_config(var)
 	local outbounds = {}
 	local rule_set_table = {}
 	local COMMON = {}
+	local remote_strategy = nil
+	local direct_strategy = nil
+	local fakedns_tag = nil
 
 	local CACHE_TEXT_FILE = CACHE_PATH .. "/cache_" .. flag .. ".txt"
 
@@ -1622,12 +1625,14 @@ function gen_config(var)
 			fakeip = nil,
 		}
 
-		table.insert(dns.servers, {
-			tag = "block",
-			address = "rcode://success",
-		})
+		if not version_ge_1_12_0 then
+			table.insert(dns.servers, {
+				tag = "block",
+				address = "rcode://success",
+			})
+		end
 
-		local remote_strategy = "prefer_ipv6"
+		remote_strategy = "prefer_ipv6"
 		if remote_dns_query_strategy == "UseIPv4" then
 			remote_strategy = "ipv4_only"
 		elseif remote_dns_query_strategy == "UseIPv6" then
@@ -1636,11 +1641,15 @@ function gen_config(var)
 
 		local remote_server = {
 			tag = "remote",
-			address_strategy = "prefer_ipv4",
-			strategy = remote_strategy,
 			detour = COMMON.default_outbound_tag,
-			client_subnet = (remote_dns_client_ip and remote_dns_client_ip ~= "") and remote_dns_client_ip or nil,
 		}
+		if version_ge_1_12_0 then
+			remote_server.domain_strategy = "prefer_ipv4"
+		else
+			remote_server.address_strategy = "prefer_ipv4"
+			remote_server.strategy = remote_strategy
+			remote_server.client_subnet = (remote_dns_client_ip and remote_dns_client_ip ~= "") and remote_dns_client_ip or nil
+		end
 
 		if remote_dns_detour == "direct" then
 			remote_server.detour = "direct"
@@ -1652,6 +1661,9 @@ function gen_config(var)
 				remote_server.type = "udp"
 				remote_server.server = remote_dns_udp_server
 				remote_server.server_port = server_port
+				if direct_dns_udp_server and not api.is_ip(remote_dns_udp_server) then
+					remote_server.domain_resolver = "direct"
+				end
 			else
 				remote_server.address = "udp://" .. remote_dns_udp_server .. ":" .. server_port
 				remote_server.address_resolver = direct_dns_udp_server and "direct" or nil
@@ -1664,6 +1676,9 @@ function gen_config(var)
 				remote_server.type = "tcp"
 				remote_server.server = remote_dns_tcp_server
 				remote_server.server_port = server_port
+				if direct_dns_udp_server and not api.is_ip(remote_dns_tcp_server) then
+					remote_server.domain_resolver = "direct"
+				end
 			else
 				remote_server.address = "tcp://" .. remote_dns_tcp_server .. ":" .. server_port
 				remote_server.address_resolver = direct_dns_udp_server and "direct" or nil
@@ -1678,7 +1693,7 @@ function gen_config(var)
 				remote_server.server_port = tonumber(remote_dns_doh_port) or 443
 				remote_server.path = doh_path
 				if direct_dns_udp_server and remote_dns_doh_host and not api.is_ip(remote_dns_doh_host) then
-					remote_server.address_resolver = "direct"
+					remote_server.domain_resolver = "direct"
 				end
 			else
 				remote_server.address = remote_dns_doh_url
@@ -1690,7 +1705,7 @@ function gen_config(var)
 			table.insert(dns.servers, remote_server)
 		end
 
-		local fakedns_tag = "remote_fakeip"
+		fakedns_tag = "remote_fakeip"
 		if remote_dns_fake or inner_fakedns == "1" then
 			if version_ge_1_12_0 then
 				table.insert(dns.servers, {
@@ -1698,7 +1713,6 @@ function gen_config(var)
 					type = "fakeip",
 					inet4_range = "198.18.0.0/16",
 					inet6_range = "fc00::/18",
-					strategy = remote_strategy,
 				})
 			else
 				dns.fakeip = {
@@ -1736,7 +1750,7 @@ function gen_config(var)
 				})
 			end
 	
-			local direct_strategy = "prefer_ipv6"
+			direct_strategy = "prefer_ipv6"
 			if direct_dns_query_strategy == "UseIPv4" then
 				direct_strategy = "ipv4_only"
 			elseif direct_dns_query_strategy == "UseIPv6" then
@@ -1751,8 +1765,7 @@ function gen_config(var)
 					type = "udp",
 					server = direct_dns_udp_server,
 					server_port = port,
-					address_strategy = "prefer_ipv6",
-					strategy = direct_strategy,
+					domain_strategy = "prefer_ipv6",
 					detour = "direct",
 				})
 			else
@@ -2007,6 +2020,103 @@ function gen_config(var)
 				table.insert(config.route.rules, {
 					action = "reject"
 				})
+			end
+
+			-- https://sing-box.sagernet.org/migration/#migrate-domain-strategy-options
+			if version_ge_1_12_0 then
+				local resolver_server = nil
+				if config.dns and config.dns.servers then
+					for _, srv in ipairs(config.dns.servers) do
+						if srv.tag == "direct" then
+							resolver_server = "direct"
+							break
+						end
+					end
+				end
+				if not resolver_server then
+					resolver_server = config.dns and config.dns.final
+				end
+				for _, value in ipairs(config.outbounds) do
+					if value.domain_strategy then
+						if resolver_server then
+							value.domain_resolver = {
+								server = resolver_server,
+								strategy = value.domain_strategy
+							}
+						end
+						value.domain_strategy = nil
+					end
+				end
+				if config.endpoints then
+					for _, value in ipairs(config.endpoints) do
+						if value.domain_strategy then
+							if resolver_server then
+								value.domain_resolver = {
+									server = resolver_server,
+									strategy = value.domain_strategy
+								}
+							end
+							value.domain_strategy = nil
+						end
+					end
+				end
+
+				-- https://sing-box.sagernet.org/migration/#migrate-legacy-dns-server-formats
+				-- https://sing-box.sagernet.org/migration/#migrate-deprecated-outbound-fields-in-dns-rule-items-to-action
+				if config.dns and config.dns.rules then
+					local function dns_server_exists(server)
+						if not server or not config.dns.servers then
+							return false
+						end
+						for _, srv in ipairs(config.dns.servers) do
+							if srv.tag == server then
+								return true
+							end
+						end
+						return false
+					end
+
+					local function dns_rule_strategy(server)
+						if server == "direct" then
+							return direct_strategy
+						elseif server and server ~= "block" and server ~= fakedns_tag then
+							return remote_strategy
+						end
+					end
+
+					local function dns_rule_client_subnet(server, current)
+						if current then
+							return current
+						end
+						if server and server ~= "direct" and server ~= "block" and server ~= fakedns_tag then
+							return (remote_dns_client_ip and remote_dns_client_ip ~= "") and remote_dns_client_ip or nil
+						end
+					end
+
+					for _, value in ipairs(config.dns.rules) do
+						if value.server == "block" then
+							value.action = "predefined"
+							value.rcode = "NOERROR"
+							value.server = nil
+							value.disable_cache = nil
+							value.rewrite_ttl = nil
+							value.client_subnet = nil
+						elseif value.server then
+							value.action = "route"
+							value.strategy = value.strategy or dns_rule_strategy(value.server)
+							value.client_subnet = dns_rule_client_subnet(value.server, value.client_subnet)
+						end
+					end
+
+					if config.dns.final and config.dns.final ~= "block" and dns_server_exists(config.dns.final) then
+						table.insert(config.dns.rules, {
+							action = "route",
+							server = config.dns.final,
+							strategy = dns_rule_strategy(config.dns.final),
+							client_subnet = dns_rule_client_subnet(config.dns.final),
+						})
+					end
+				end
 			end
 		end
 		return jsonc.stringify(config, 1)
