@@ -182,13 +182,19 @@ if has_xray then
 	o = s_xray:option(Flag, "noise", translate("Noise"), translate("UDP noise, Under some circumstances it can bypass some UDP based protocol restrictions."))
 	o.default = 0
 
+	o = s_xray:option(Flag, "disable_sniff_socks", translate("Disable traffic sniff (socks-in)"))
+	o.default = 0
+	o.rmempty = false
+
+	o = s_xray:option(Flag, "disable_sniff_tproxy", translate("Disable traffic sniff (tproxy)"))
+	o.default = 0
+	o.rmempty = false
+
 	o = s_xray:option(Flag, "sniffing_override_dest", translate("Override the connection destination address"))
 	o.default = 0
 	o.description = translate("Override the connection destination address with the sniffed domain.<br />Otherwise use sniffed domain for routing only.<br />If using shunt nodes, configure the domain shunt rules correctly.")
-
-	o = s_xray:option(Flag, "route_only", translate("Sniffing Route Only"))
-	o.default = 0
-	o:depends("sniffing", true)
+	o:depends("disable_sniff_socks", false)
+	o:depends("disable_sniff_tproxy", false)
 
 	local domains_excluded = string.format("/usr/share/%s/domains_excluded", appname)
 	o = s_xray:option(TextValue, "excluded_domains", translate("Excluded Domains"), translate("If the traffic sniffing result is in this list, the destination address will not be overridden."))
@@ -196,7 +202,8 @@ if has_xray then
 	o.wrap = "off"
 	o.cfgvalue = function(self, section) return fs.readfile(domains_excluded) or "" end
 	o.write = function(self, section, value) fs.writefile(domains_excluded, value:gsub("\r\n", "\n")) end
-	o:depends({sniffing_override_dest = true})
+	o:depends({disable_sniff_socks = false, sniffing_override_dest = true})
+	o:depends({disable_sniff_tproxy = false, sniffing_override_dest = true})
 
 	o = s_xray:option(Value, "buffer_size", translate("Buffer Size"), translate("Buffer size for every connection (kB)"))
 	o.datatype = "uinteger"
@@ -251,10 +258,23 @@ if has_singbox then
 	s.anonymous = true
 	s.addremove = false
 
+	o = s:option(Flag, "disable_sniff_socks", translate("Disable traffic sniff (socks-in)"))
+	o.default = 0
+	o.rmempty = false
+
+	o = s:option(Flag, "disable_sniff_tproxy", translate("Disable traffic sniff (tproxy)"))
+	o.default = 0
+	o.rmempty = false
+
+	o = s:option(Flag, "disable_sniff_dns_in", translate("Disable traffic sniff (dns-in)"))
+	o.default = 0
+	o.rmempty = false
+
 	o = s:option(Flag, "sniff_override_destination", translate("Override the connection destination address"))
 	o.default = 0
 	o.rmempty = false
 	o.description = translate("Override the connection destination address with the sniffed domain.<br />When enabled, traffic will match only by domain, ignoring IP rules.<br />If using shunt nodes, configure the domain shunt rules correctly.")
+	o:depends("disable_sniff_tproxy", false)
 
 	if version_ge_1_12_0 then
 		o = s:option(Flag, "record_fragment", "TLS Record " .. translate("Fragment"),

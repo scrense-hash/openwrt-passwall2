@@ -750,6 +750,9 @@ function gen_config(var)
 	local CACHE_TEXT_FILE = CACHE_PATH .. "/cache_" .. flag .. ".txt"
 
 	local xray_settings = uci:get_all(appname, "@global_xray[0]") or {}
+	local legacy_disable_sniff = xray_settings.disable_sniff == "1"
+	local socks_sniff_enabled = not legacy_disable_sniff and xray_settings.disable_sniff_socks ~= "1"
+	local tproxy_sniff_enabled = not legacy_disable_sniff and xray_settings.disable_sniff_tproxy ~= "1"
 
 	local node = node_id and uci:get_all(appname, node_id) or nil
 	local balancers = {}
@@ -762,11 +765,13 @@ function gen_config(var)
 			port = tonumber(local_socks_port),
 			protocol = "socks",
 			settings = {auth = "noauth", udp = true},
-			sniffing = {
+		}
+		if socks_sniff_enabled then
+			inbound.sniffing = {
 				enabled = xray_settings.sniffing_override_dest == "1" or node.protocol == "_shunt"
 			}
-		}
-		if inbound.sniffing.enabled == true then
+		end
+		if inbound.sniffing and inbound.sniffing.enabled == true then
 			inbound.sniffing.destOverride = {"http", "tls", "quic"}
 			inbound.sniffing.routeOnly = xray_settings.sniffing_override_dest ~= "1" or nil
 			inbound.sniffing.domainsExcluded = xray_settings.sniffing_override_dest == "1" and get_domain_excluded() or nil
@@ -1664,17 +1669,19 @@ function gen_config(var)
 			protocol = "dokodemo-door",
 			settings = {network = "tcp,udp", followRedirect = true},
 			streamSettings = {sockopt = {tproxy = "tproxy"}},
-			sniffing = {
+		}
+		if tproxy_sniff_enabled then
+			inbound.sniffing = {
 				enabled = xray_settings.sniffing_override_dest == "1" or node.protocol == "_shunt"
 			}
-		}
-		if inbound.sniffing.enabled == true then
+		end
+		if inbound.sniffing and inbound.sniffing.enabled == true then
 			inbound.sniffing.destOverride = {"http", "tls", "quic"}
 			inbound.sniffing.metadataOnly = false
 			inbound.sniffing.routeOnly = xray_settings.sniffing_override_dest ~= "1" or nil
 			inbound.sniffing.domainsExcluded = xray_settings.sniffing_override_dest == "1" and get_domain_excluded() or nil
 		end
-		if remote_dns_fake or inner_fakedns == "1" then
+		if tproxy_sniff_enabled and (remote_dns_fake or inner_fakedns == "1") then
 			inbound.sniffing.enabled = true
 			if not inbound.sniffing.destOverride then
 				inbound.sniffing.destOverride = {"fakedns"}

@@ -962,6 +962,11 @@ function gen_config(var)
 	local CACHE_TEXT_FILE = CACHE_PATH .. "/cache_" .. flag .. ".txt"
 
 	local singbox_settings = uci:get_all(appname, "@global_singbox[0]") or {}
+	local legacy_disable_sniff = singbox_settings.disable_sniff == "1"
+	local socks_sniff_enabled = not legacy_disable_sniff and singbox_settings.disable_sniff_socks ~= "1"
+	local tproxy_sniff_enabled = not legacy_disable_sniff and singbox_settings.disable_sniff_tproxy ~= "1"
+	local dns_in_sniff_enabled = not legacy_disable_sniff and singbox_settings.disable_sniff_dns_in ~= "1"
+	local sniff_override_destination = tproxy_sniff_enabled and singbox_settings.sniff_override_destination == "1" or nil
 
 	local route = {
 		rules = {}
@@ -1033,7 +1038,7 @@ function gen_config(var)
 			tag = "socks-in",
 			listen = local_socks_address,
 			listen_port = tonumber(local_socks_port),
-			sniff = true
+			sniff = socks_sniff_enabled or nil
 		}
 		if local_socks_username and local_socks_password and local_socks_username ~= "" and local_socks_password ~= "" then
 			inbound.users = {
@@ -1070,8 +1075,8 @@ function gen_config(var)
 			tag = "tproxy",
 			listen = "::",
 			listen_port = tonumber(redir_port),
-			sniff = true,
-			sniff_override_destination = (singbox_settings.sniff_override_destination == "1") and true or false
+			sniff = tproxy_sniff_enabled or nil,
+			sniff_override_destination = sniff_override_destination
 		}
 		if tcp_proxy_way ~= "tproxy" then
 			local inbound = {
@@ -1079,8 +1084,8 @@ function gen_config(var)
 				tag = "redirect_tcp",
 				listen = "::",
 				listen_port = tonumber(redir_port),
-				sniff = true,
-				sniff_override_destination = (singbox_settings.sniff_override_destination == "1") and true or false,
+				sniff = tproxy_sniff_enabled or nil,
+				sniff_override_destination = sniff_override_destination,
 			}
 			table.insert(inbounds, inbound)
 
@@ -1848,19 +1853,22 @@ function gen_config(var)
 			tag = "dns-in",
 			listen = "127.0.0.1",
 			listen_port = tonumber(dns_listen_port),
-			sniff = true,
+			sniff = dns_in_sniff_enabled or nil,
 		})
 		table.insert(outbounds, {
 			type = "dns",
 			tag = "dns-out",
 		})
-		table.insert(route.rules, 1, {
-			protocol = "dns",
+		local dns_in_route_rule = {
 			inbound = {
 				"dns-in"
 			},
 			outbound = "dns-out"
-		})
+		}
+		if dns_in_sniff_enabled then
+			dns_in_route_rule.protocol = "dns"
+		end
+		table.insert(route.rules, 1, dns_in_route_rule)
 
 		local content = flag .. node_id .. jsonc.stringify(route.rules)
 		if api.cacheFileCompareToLogic(CACHE_TEXT_FILE, content) == false then

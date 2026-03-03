@@ -49,6 +49,17 @@ chmod +x /usr/share/passwall2/*.sh
 [ "$(uci -q get passwall2.@global_xray[0].sniffing)" == "1" ] && [ "$(uci -q get passwall2.@global_xray[0].route_only)" != "1" ] && uci -q set passwall2.@global_xray[0].sniffing_override_dest=1
 uci -q delete passwall2.@global_xray[0].sniffing
 uci -q delete passwall2.@global_xray[0].route_only
+[ "$(uci -q get passwall2.@global_xray[0].disable_sniff)" == "1" ] && {
+	uci -q set passwall2.@global_xray[0].disable_sniff_socks=1
+	uci -q set passwall2.@global_xray[0].disable_sniff_tproxy=1
+}
+uci -q delete passwall2.@global_xray[0].disable_sniff
+[ "$(uci -q get passwall2.@global_singbox[0].disable_sniff)" == "1" ] && {
+	uci -q set passwall2.@global_singbox[0].disable_sniff_socks=1
+	uci -q set passwall2.@global_singbox[0].disable_sniff_tproxy=1
+	uci -q set passwall2.@global_singbox[0].disable_sniff_dns_in=1
+}
+uci -q delete passwall2.@global_singbox[0].disable_sniff
 uci -q commit passwall2
 
 sed -i "s#add_from#group#g" /etc/config/passwall2 2>/dev/null
