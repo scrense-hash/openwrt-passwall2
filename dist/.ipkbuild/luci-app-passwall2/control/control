@@ -1,8 +1,0 @@
-Package: luci-app-passwall2
-Version: 26.3.1-1
-Depends: coreutils, coreutils-base64, coreutils-nohup, curl, ip-full, libuci-lua, lua, luci-compat, luci-lib-jsonc, resolveip, tcping, xray-core, geoview, v2ray-geoip, v2ray-geosite, unzip
-Section: luci
-Category: LuCI
-Title: LuCI support for PassWall 2
-Architecture: all
-Description: LuCI support for PassWall 2
